@@ -32,8 +32,10 @@ import com.android.wallpaper.module.PartnerProvider;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * Represents a wallpaper from the "partner customization" APK installed on the system.
@@ -78,6 +80,7 @@ public class LegacyPartnerWallpaperInfo extends WallpaperInfo {
 
         List<WallpaperInfo> wallpaperInfos = new ArrayList<>();
         List<File> searchDirs = new ArrayList<>();
+        Set<String> seenNames = new HashSet<>();
 
         // Add legacy partner directory if present.
         File legacyDir = partnerProvider.getLegacyWallpaperDirectory();
@@ -113,7 +116,12 @@ public class LegacyPartnerWallpaperInfo extends WallpaperInfo {
                         && !lower.endsWith(".png") && !lower.endsWith(".webp")) {
                     continue;
                 }
-                if (lower.contains("_small.")) {
+                // Skip small thumbnail companions and default wallpaper duplicates
+                if (lower.contains("_small.") || lower.startsWith("default_wallpaper.") || lower.startsWith("default_wallpaper_")) {
+                    continue;
+                }
+                // Skip duplicates across multiple scan directories
+                if (!seenNames.add(lower)) {
                     continue;
                 }
 
