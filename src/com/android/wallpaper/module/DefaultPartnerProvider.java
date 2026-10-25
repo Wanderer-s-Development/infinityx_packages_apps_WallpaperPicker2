@@ -111,7 +111,18 @@ public class DefaultPartnerProvider implements PartnerProvider {
             resId = res.getIdentifier(PartnerProvider.RES_LEGACY_SYSTEM_WALLPAPER_DIR,
                     "string", mPackageName);
         }
-        return (resId != 0) ? new File(res.getString(resId)) : null;
+        if (resId != 0) {
+            return new File(res.getString(resId));
+        }
+        File productWallpapers = new File("/product/media/wallpapers");
+        if (productWallpapers.exists() && productWallpapers.isDirectory()) {
+            return productWallpapers;
+        }
+        File systemWallpapers = new File("/system/media/wallpapers");
+        if (systemWallpapers.exists() && systemWallpapers.isDirectory()) {
+            return systemWallpapers;
+        }
+        return null;
     }
 
     @Override
