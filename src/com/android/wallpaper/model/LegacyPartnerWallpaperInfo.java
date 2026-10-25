@@ -33,6 +33,7 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Represents a wallpaper from the "partner customization" APK installed on the system.
@@ -70,36 +71,60 @@ public class LegacyPartnerWallpaperInfo extends WallpaperInfo {
 
     /**
      * @param ctx
-     * @return All legacy partner wallpapers found on the device.
+     * @return All legacy partner and read-only system wallpapers found on the device.
      */
     public static List<WallpaperInfo> getAll(Context ctx) {
         PartnerProvider partnerProvider = InjectorProvider.getInjector().getPartnerProvider(ctx);
 
         List<WallpaperInfo> wallpaperInfos = new ArrayList<>();
+        List<File> searchDirs = new ArrayList<>();
 
-        // Add system wallpapers from the legacy wallpaper directory, if present.
-        File systemDir = partnerProvider.getLegacyWallpaperDirectory();
-
-        // None found, so return empty list.
-        if (systemDir == null || !systemDir.isDirectory()) {
-            return wallpaperInfos;
+        // Add legacy partner directory if present.
+        File legacyDir = partnerProvider.getLegacyWallpaperDirectory();
+        if (legacyDir != null && legacyDir.isDirectory()) {
+            searchDirs.add(legacyDir);
         }
 
-        for (File file : systemDir.listFiles()) {
-            if (!file.isFile()) {
+        // Add read-only system and product wallpaper directories.
+        File[] fallbackDirs = new File[] {
+            new File("/product/media/wallpapers"),
+            new File("/system/media/wallpapers"),
+            new File("/system_ext/media/wallpapers")
+        };
+        for (File dir : fallbackDirs) {
+            if (dir.exists() && dir.isDirectory() && !searchDirs.contains(dir)) {
+                searchDirs.add(dir);
+            }
+        }
+
+        for (File systemDir : searchDirs) {
+            File[] files = systemDir.listFiles();
+            if (files == null) {
                 continue;
             }
-            String fullName = file.getName();
-            String name = file.getName();
-            int dotPos = name.lastIndexOf('.');
-            String extension = "";
-            if (dotPos > -1) {
-                extension = name.substring(dotPos);
-                name = name.substring(0, dotPos);
-            }
 
-            String thumbName = name + extension;
-            wallpaperInfos.add(new LegacyPartnerWallpaperInfo(thumbName, fullName));
+            for (File file : files) {
+                if (!file.isFile()) {
+                    continue;
+                }
+                String name = file.getName();
+                String lower = name.toLowerCase(Locale.ROOT);
+                if (!lower.endsWith(".jpg") && !lower.endsWith(".jpeg")
+                        && !lower.endsWith(".png") && !lower.endsWith(".webp")) {
+                    continue;
+                }
+                if (lower.contains("_small.")) {
+                    continue;
+                }
+
+                int dotPos = name.lastIndexOf('.');
+                String dotExt = (dotPos > -1) ? name.substring(dotPos) : "";
+                String baseName = (dotPos > -1) ? name.substring(0, dotPos) : name;
+                File smallFile = new File(systemDir, baseName + "_small" + dotExt);
+                String thumbPath = smallFile.exists() ? smallFile.getAbsolutePath() : file.getAbsolutePath();
+
+                wallpaperInfos.add(new LegacyPartnerWallpaperInfo(thumbPath, file.getAbsolutePath()));
+            }
         }
 
         return wallpaperInfos;
@@ -120,14 +145,51 @@ public class LegacyPartnerWallpaperInfo extends WallpaperInfo {
     }
 
     public Drawable getThumbnail(Context context) {
-        final File systemDir = getSystemLegacyDir(context);
-        if (systemDir == null) {
+        File thumbnail;
+        if (mThumbName != null && mThumbName.startsWith("/")) {
+            thumbnail = new File(mThumbName);
+        } else {
+            final File systemDir = getSystemLegacyDir(context);
+            thumbnail = (systemDir == null) ? null : new File(systemDir, mThumbName);
+        }
+        if (thumbnail == null || !thumbnail.exists()) {
             return null;
         }
 
-        File thumbnail = new File(systemDir, mThumbName);
         Bitmap thumbBitmap = BitmapFactory.decodeFile(thumbnail.getAbsolutePath());
-        return new BitmapDrawable(context.getResources(), thumbBitmap);
+        return (thumbBitmap != null) ? new BitmapDrawable(context.getResources(), thumbBitmap) : null;
+    }
+
+    @Override
+    public String getWallpaperId() {
+        return mFullName;
+    }
+
+    @Override
+    public String getTitle(Context context) {
+        if (mFullName == null) {
+            return null;
+        }
+        String fileName = new File(mFullName).getName();
+        int dotPos = fileName.lastIndexOf('.');
+        if (dotPos > 0) {
+            fileName = fileName.substring(0, dotPos);
+        }
+        String[] words = fileName.replace('_', ' ').replace('-', ' ').split("\\s+");
+        StringBuilder sb = new StringBuilder();
+        for (String word : words) {
+            if (word.isEmpty()) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append(' ');
+            }
+            sb.append(Character.toUpperCase(word.charAt(0)));
+            if (word.length() > 1) {
+                sb.append(word.substring(1));
+            }
+        }
+        return (sb.length() > 0) ? sb.toString() : fileName;
     }
 
     @Override
@@ -138,8 +200,13 @@ public class LegacyPartnerWallpaperInfo extends WallpaperInfo {
     @Override
     public Asset getAsset(Context context) {
         if (mAsset == null) {
-            final File systemDir = getSystemLegacyDir(context);
-            File fullSizeImage = (systemDir == null) ? null : new File(systemDir, mFullName);
+            File fullSizeImage;
+            if (mFullName != null && mFullName.startsWith("/")) {
+                fullSizeImage = new File(mFullName);
+            } else {
+                final File systemDir = getSystemLegacyDir(context);
+                fullSizeImage = (systemDir == null) ? null : new File(systemDir, mFullName);
+            }
             mAsset = new FileAsset(fullSizeImage);
         }
         return mAsset;
@@ -148,8 +215,13 @@ public class LegacyPartnerWallpaperInfo extends WallpaperInfo {
     @Override
     public Asset getThumbAsset(Context context) {
         if (mThumbAsset == null) {
-            final File systemDir = getSystemLegacyDir(context);
-            File thumbnail = (systemDir == null) ? null : new File(systemDir, mThumbName);
+            File thumbnail;
+            if (mThumbName != null && mThumbName.startsWith("/")) {
+                thumbnail = new File(mThumbName);
+            } else {
+                final File systemDir = getSystemLegacyDir(context);
+                thumbnail = (systemDir == null) ? null : new File(systemDir, mThumbName);
+            }
             mThumbAsset = new FileAsset(thumbnail);
         }
         return mThumbAsset;
